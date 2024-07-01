@@ -7,6 +7,7 @@ import math
 import time
 
 # Load MiDaS model
+print("Initializing MiDaS before dAI Anna...")
 midas = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 midas.to(device)
@@ -24,10 +25,90 @@ ax = fig.add_subplot(111, projection='3d')  # Add 3D subplot
 ax.set_xlabel('X')
 ax.set_ylabel('Y')
 ax.set_zlabel('Z')
-ax.set_title('3D Points Visualization')
+ax.set_title('Estimated Carmageddon Environment')
 plt.ion()
 plt.show()
 
+
+#Convert the depth map to 3D by plotting pixels and estimating distance based on known resolution the game runs at (640x480)
+def depth_map_to_3d(depth_map, fx=640, fy=480, cx=None, cy=None):
+    """
+    Convert a depth map to 3D points.
+    
+    :param depth_map: 2D numpy array of depth values
+    :param fx: focal length in x direction (default: 640)
+    :param fy: focal length in y direction (default: 480)
+    :param cx: principal point x-coordinate (default: width / 2)
+    :param cy: principal point y-coordinate (default: height / 2)
+    :return: 3D points as a numpy array of [x, y, z] coordinates
+    """
+    height, width = depth_map.shape
+    
+    if cx is None:
+        cx = width / 2
+    if cy is None:
+        cy = height / 2
+    
+    # Create meshgrid of image coordinates
+    x = np.arange(width)
+    y = np.arange(height)
+    x_grid, y_grid = np.meshgrid(x, y, indexing='xy')
+    
+    # Normalize coordinates based on camera intrinsics
+    x_normalized = (x_grid - cx) / fx
+    y_normalized = (y_grid - cy) / fy
+    
+    # Reshape to create points in [x, y, z] format
+    points = np.dstack((x_normalized, -depth_map, -y_normalized)).reshape(-1, 3)
+    
+    return points
+
+def find_horizon_line(depth_map, depth_threshold=85):
+    """
+    Attempt to identify the horizon line in the depth map and visualize the mask.
+
+    :param depth_map: 2D numpy array of depth values
+    :param depth_threshold: Threshold value to identify the horizon
+    :return: y-coordinate of the horizon line
+    """
+    height, width = depth_map.shape
+    
+    # Create a binary mask based on the depth threshold
+    mask = depth_map > depth_threshold
+    
+    # Visualize the mask using OpenCV
+    mask_visualization = np.uint8(mask * 255)  # Convert boolean mask to uint8 for visualization
+    mask_visualization = cv2.cvtColor(mask_visualization, cv2.COLOR_GRAY2BGR)  # Convert to BGR for color image display
+    
+    # Calculate the mean y-coordinates for rows with significant depth
+    y_coords = np.arange(height).reshape(-1, 1)
+    significant_y_coords = y_coords[mask.any(axis=1)]
+    
+    # Calculate the median of significant y-coordinates
+    median_y = np.median(significant_y_coords)
+    
+    # Filter out values that deviate significantly from the median
+    filtered_y_coords = significant_y_coords[np.abs(significant_y_coords - median_y) < height * 0.1]    
+    # Calculate weighted mean along the y-axis with heavier weighting towards lower y coordinates
+    weights = filtered_y_coords / np.max(filtered_y_coords)
+    weighted_mean_y = np.sum(filtered_y_coords * weights) / np.sum(weights)
+    
+    # If no significant depth pixels are found, return the bottom of the image
+    if np.isnan(weighted_mean_y) or len(filtered_y_coords) == 0:
+        horizon_y = height - 1
+    else:
+        horizon_y = int(weighted_mean_y)
+    
+    # Draw a red line indicating the horizon on the mask visualization
+    
+    #mask_preview = mask_visualization
+    #cv2.line(mask_preview, (0, horizon_y), (width - 1, horizon_y), (0, 0, 255), thickness=2)
+    
+    # Display the mask with the horizon line
+    #cv2.imshow('Foreground Mask / Horizon Estimation', mask_preview)
+    #cv2.waitKey(1)  # Wait for any key press to close (blocking)
+    
+    return horizon_y
 def correct_perspective(points, depth_map, horizon_y, height):
     """
     Correct the perspective distortion in 3D points based on a depth map, using inverse perspective transformation.
@@ -67,93 +148,16 @@ def correct_perspective(points, depth_map, horizon_y, height):
     
     return adjusted_points
 
-def depth_map_to_3d(depth_map, fx=640, fy=480, cx=None, cy=None):
-    """
-    Convert a depth map to 3D points.
-    
-    :param depth_map: 2D numpy array of depth values
-    :param fx: focal length in x direction (default: 640)
-    :param fy: focal length in y direction (default: 480)
-    :param cx: principal point x-coordinate (default: width / 2)
-    :param cy: principal point y-coordinate (default: height / 2)
-    :return: 3D points as a numpy array of [x, y, z] coordinates
-    """
-    height, width = depth_map.shape
-    
-    if cx is None:
-        cx = width / 2
-    if cy is None:
-        cy = height / 2
-    
-    # Create meshgrid of image coordinates
-    x = np.arange(width)
-    y = np.arange(height)
-    x_grid, y_grid = np.meshgrid(x, y, indexing='xy')
-    
-    # Normalize coordinates based on camera intrinsics
-    x_normalized = (x_grid - cx) / fx
-    y_normalized = (y_grid - cy) / fy
-    
-    # Reshape to create points in [x, y, z] format
-    points = np.dstack((x_normalized, -depth_map, -y_normalized)).reshape(-1, 3)
-    
-    return points
-
-def find_horizon_line(depth_map, depth_threshold=97):
-    """
-    Attempt to identify the horizon line in the depth map and visualize the mask.
-
-    :param depth_map: 2D numpy array of depth values
-    :param depth_threshold: Threshold value to identify the horizon
-    :return: y-coordinate of the horizon line
-    """
-    height, width = depth_map.shape
-    
-    # Create a binary mask based on the depth threshold
-    mask = depth_map > depth_threshold
-    
-    # Visualize the mask using OpenCV
-    mask_visualization = np.uint8(mask * 255)  # Convert boolean mask to uint8 for visualization
-    mask_visualization = cv2.cvtColor(mask_visualization, cv2.COLOR_GRAY2BGR)  # Convert to BGR for color image display
-    
-    # Calculate the mean y-coordinates for rows with significant depth
-    y_coords = np.arange(height).reshape(-1, 1)
-    significant_y_coords = y_coords[mask.any(axis=1)]
-    
-    # Calculate the median of significant y-coordinates
-    median_y = np.median(significant_y_coords)
-    
-    # Filter out values that deviate significantly from the median
-    filtered_y_coords = significant_y_coords[np.abs(significant_y_coords - median_y) < height * 0.20]
-    
-    # Calculate weighted mean along the y-axis with heavier weighting towards lower y coordinates
-    weights = np.exp(filtered_y_coords)  # Exponential scaling
-    weighted_mean_y = np.sum(filtered_y_coords * weights) / np.sum(weights)
-    
-    # If no significant depth pixels are found, return the bottom of the image
-    if np.isnan(weighted_mean_y) or len(filtered_y_coords) == 0:
-        horizon_y = height - 1
-    else:
-        horizon_y = int(weighted_mean_y)
-    
-    # Draw a red line indicating the horizon on the mask visualization
-    
-    #mask_preview = mask_visualization
-    #cv2.line(mask_preview, (0, horizon_y), (width - 1, horizon_y), (0, 0, 255), thickness=2)
-    
-    # Display the mask with the horizon line
-    #cv2.imshow('Foreground Mask / Horizon Estimation', mask_preview)
-    #cv2.waitKey(1)  # Wait for any key press to close (blocking)
-    
-    return horizon_y
-
+frame = 0
 def visualize_3d_points(points, subsample=None, horizon_y = None):
+    global frame
     """
     Visualize 3D points in a matplotlib 3D scatter plot.
 
     :param points: 3D points as a numpy array of [x, y, z] coordinates
     :param subsample: Optional integer to subsample points for visualization
     """
+    plt.ion()
     ax.clear()  # Clear the previous plot
     
     # Plot a subsample of points if specified
@@ -164,7 +168,7 @@ def visualize_3d_points(points, subsample=None, horizon_y = None):
     ax.scatter(points[:, 0], points[:, 1], points[:, 2], c=points[:, 2], cmap='inferno', s=1)
 
     # Compute processing time and update title
-    formatted_title = f'dAIanna Visualizer - Time to Process: {processing_time:.3f} seconds'
+    formatted_title = f'3D Environment Estimation\nTime to Process: {processing_time:.3f} seconds'
     if horizon_y is not None:
         formatted_title += f"\nHorizon: {horizon_y}px"
         
@@ -172,7 +176,9 @@ def visualize_3d_points(points, subsample=None, horizon_y = None):
 
     # Redraw the plot
     plt.draw()
-    plt.pause(0.1)
+    plt.savefig("frames/frame"+str(frame)+".png")
+    plt.pause(0.01)
+    frame = frame + 1
 
 def depth_estimation(image):
     """
@@ -207,7 +213,8 @@ def depth_estimation(image):
 
     # Convert to numpy array
     depth_map = prediction.cpu().numpy() 
-    
+    # Bias towards further distances faster
+    depth_map = np.power(depth_map, 0.8)  # Adjust the exponent as needed
     # Normalize the depth map (optional, depending on visualization needs)
     depth_map = cv2.normalize(depth_map, None, 0, 255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 
@@ -249,6 +256,30 @@ def process_depth_mapping(image_for_depth_mapping, palette_image = None, horizon
     # Visualize 3D points
     visualize_3d_points(points_corrected, subsample=50, horizon_y = horizon_y)
 
+def process_video(video_path):
+    cap = cv2.VideoCapture(video_path)
+    
+    if not cap.isOpened():
+        print("Error: Unable to open video.")
+        return
+    
+    while True:
+        ret, frame = cap.read()
+        
+        if not ret:
+            break
+        
+        # Perform your calculations on each frame here
+        # Example: depth estimation, perspective correction, etc.
+        # For simplicity, let's just display the frame
+        process_depth_mapping(frame, palette_image = None, horizon_y=190, height=240)
+        # Press 'q' on keyboard to exit
+    
+    cap.release()
+    cv2.destroyAllWindows()
+
 # Example usage if needed
 if __name__ == "__main__":
+    #image_for_depth_mapping = cv2.imread("screencap_noborder.png", cv2.IMREAD_COLOR)
+    #process_depth_mapping(image_for_depth_mapping, palette_image = None, horizon_y=190, height=240)
     pass  # This script is intended to be imported and used within another script

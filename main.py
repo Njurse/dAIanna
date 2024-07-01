@@ -4,6 +4,7 @@ import pygetwindow as gw
 import pyautogui
 import time
 import depth_module
+import daianna_intro
 
 def grab_window(window_title):
     try:
@@ -59,7 +60,7 @@ def create_hud_mask(screen):
     min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
     
     # Threshold for match detection (adjust as needed)
-    threshold = 0.61
+    threshold = 0.60
     #print(f"HUD similarity: {cv2.minMaxLoc(result)}")
     
     # Create a mask based on the matching result
@@ -120,14 +121,13 @@ def preprocess_screen(screen, template):
 
 def main():
     window_title = "Carmageddon"
-
+    print("Initializing main thread...") #to do: switch to proper logging, absolutely necessary if i decide async is required
     try:
         while True:
             # Capture from the specific window
-
             screen = grab_window(window_title)
             if screen is None:
-                print("Issue capturing, skipping this generation.")
+                print("Issue capturing the window, skipping this generation.")
                 continue  # Skip this iteration if screen capture failed
             else:
                 # Check if HUD is detected (preprocess only if not in main menu)
@@ -146,16 +146,16 @@ def main():
                     continue
                     #print("Main menu detected!")
 
-            # Display the captured screen
-            #cv2.imshow('Game Screen', screen)
-                #cv2.waitKey(1)  # Wait for 1 millisecond (non-blocking)
+                # Display the captured screen
+                cv2.imshow('Game Screen', screen)
+                cv2.waitKey(1)  # Wait for 1 millisecond (non-blocking)
             
             # Check for 'q' key to exit loop and close window
             #if cv2.waitKey(1) & 0xFF == ord('q'):
                 #break
             
             # Wait for 0.25 seconds (quarter second)
-            time.sleep(0.25)
+            time.sleep(0.1)
 
     except Exception as e:
         print(f"Error: {e}")
@@ -164,4 +164,6 @@ def main():
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    main()
+    daianna_intro.play_intro()
+    depth_module.process_video("sample_input.mkv")
+    #main() is commented out at the moment because we can test mapping from a video then when everything is correct and tracing as it should the video can be swapped for opencv capture
