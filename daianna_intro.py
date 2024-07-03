@@ -14,8 +14,9 @@ def play_intro():
     ascii_lines = ascii_art.strip().split('\n')
 
     # Print each line with a delay
+    os.system('cls' if os.name == 'nt' else 'clear')
     for line in ascii_lines:
         print(line)
         time.sleep(0.01)
-    time.sleep(2)
+    time.sleep(0.5)
     os.system('cls' if os.name == 'nt' else 'clear')
