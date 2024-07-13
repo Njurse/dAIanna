@@ -1,6 +1,6 @@
 # dAIanna - A Reinforcement Learning Framework for Carmageddon Max Pack
 
-_dAIanna_ is an ambitious project aimed at enhancing the gaming experience in Carmageddon Max Pack through advanced AI techniques. The current testing environment is Windows 10 with AMD ROCm in lieu of CUDA
+_dAIanna_ is an ambitious project aimed at enhancing the gaming experience in Carmageddon Max Pack through advanced AI techniques. The current testing environment is Windows 10 with AMD ROCm in lieu of CUDA; The application _can_ run on Linux, but _dAIannaHook.dll_ is not natively supported. Future plans include writing a Linux-compatible (or ideally, OS-agnostic) hook to facilitate running _dAIanna_ on any capable hardware.
 
 ## dAIannaHook.dll
 Initially, _dAIanna_ was planned to utilize the MiDaS neural network to produce a depth map from a screen capture of the game, and a perspective correction algorithm would attempt to correct the depth map to more accurately reflect the in-game environment. However, the massive overhead from MiDaS and iterating over tens of thousands of points resulted in long processing times (Well before any game-playing AI code gets written, the information gathering stage of each update needs to be fast enough to leave as much time as possible for the AI to process its surroundings.)  
