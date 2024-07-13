@@ -1,0 +1,13 @@
+Lib/
+Library/
+Include/
+Scripts/
+share/
+__pycache__/
+pyvenv.cfg
+screencap_template2.png
+beamconnector.py
+dAIannaHook/packages
+dAIannaHook/x64
+dAIannaHook/dAIannaHook
+dAIannaHook/.vs
