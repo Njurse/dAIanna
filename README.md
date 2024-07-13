@@ -1,4 +1,4 @@
-# dAIanna - A Reinforcment Learning Framework for Carmageddon Max Pack
+# dAIanna - A Reinforcement Learning Framework for Carmageddon Max Pack
 
 _dAIanna_ is an ambitious project aimed at enhancing the gaming experience in Carmageddon Max Pack through advanced AI techniques. The current testing environment is Windows 10 with AMD ROCm in lieu of CUDA
 
