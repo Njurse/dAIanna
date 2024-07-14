@@ -2,4 +2,4 @@
 F:\dAIanna\dAIannaLoader\packages\EasyHookNativePackage.2.7.7097\build\native\include\easyhook.h(39,13): warning C4005: 'NTDDI_VERSION': macro redefinition
 F:\dAIanna\dAIannaLoader\packages\EasyHookNativePackage.2.7.7097\build\native\include\easyhook.h(40,13): warning C4005: '_WIN32_WINNT': macro redefinition
 F:\dAIanna\dAIannaLoader\dAIannaInjector\dAIannaInjector.cpp(127,17): warning C4244: 'initializing': conversion from 'double' to 'int', possible loss of data
-  dAIannaInjector.vcxproj -> F:\dAIanna\dAIannaLoader\x64\Debug\dAIannaInjector.exe
+  dAIannaInjector.vcxproj -> F:\dAIanna\dAIannaLoader\Debug\dAIannaInjector.exe

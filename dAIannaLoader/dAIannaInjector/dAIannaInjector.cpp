@@ -5,7 +5,10 @@
 #include "dAIannaInjector.h"
 #include "Windows.h"
 #include <easyhook.h>
+#include <iostream>
+#include <shlwapi.h>
 #pragma comment(lib, "EasyHook32.lib")
+#pragma comment(lib, "Shlwapi.lib")
 #define MAX_LOADSTRING 100
 
 // Global Variables:
@@ -126,7 +129,7 @@ void CreateControls(HWND hWnd)
     // Create the help text string
     CreateWindowW(
         L"STATIC",                       // Predefined class; Unicode assumed
-        L"If you can read this you've cocked something up and dAIanna could not automatically perform hot DLL munging. Please check your configuration and restart dAIanna.py or attempt to manually inject the DLL below.",             // Text content
+        L"If you can read this you've cocked something up and dAIanna could not automatically perform hot DLL munging. (Great fucking job.) Please check your configuration and restart dAIanna.py or attempt to manually inject the DLL below.",             // Text content
         WS_VISIBLE | WS_CHILD | SS_CENTER,           // Styles
         staticX,                         // x position
         staticY,                         // y position
@@ -173,36 +176,101 @@ void StartMunging(LPCWSTR exePath, LPCWSTR dllPath)
 {
     // Set up the process creation parameters
     STARTUPINFO si = { sizeof(STARTUPINFO) };
-    DWORD processId;
+    PROCESS_INFORMATION pi;
 
-    // Call RhCreateAndInject
-    /*/NTSTATUS mungingResult = RhCreateAndInject(
-        (WCHAR*)exePath,              // Path to the target executable
-        NULL,                         // Command line arguments (NULL if none)
-        CREATE_DEFAULT_ERROR_MODE,    // Process creation flags
-        EASYHOOK_INJECT_DEFAULT,      // Injection options
-        (WCHAR*)dllPath,              // Path to the 32-bit DLL (NULL if not used)
-        (WCHAR*)dllPath,              // Path to the 64-bit DLL (NULL if not used)
-        NULL,                         // Pass any data to the injected DLL (NULL if none)
-        0,                            // Size of the data (0 if none)
-        &processId                    // Out process ID
-    );
-    */
-    if (true)
+    // Extract the directory from the exePath
+    // Get the full path to the EXE
+    WCHAR exeFullPath[MAX_PATH];
+    GetFullPathNameW(exePath, MAX_PATH, exeFullPath, nullptr);
+
+    // Extract the directory from the exeFullPath
+    WCHAR exeDir[MAX_PATH];
+    wcscpy_s(exeDir, exeFullPath);
+    PathRemoveFileSpec(exeDir); // Removes the file name, leaving the directory path
+
+    // Get the full path to the DLL
+    WCHAR dllFullPath[MAX_PATH];
+    GetFullPathNameW(dllPath, MAX_PATH, dllFullPath, nullptr);
+
+
+    // Get the current working directory to restore later
+    WCHAR originalDir[MAX_PATH];
+    if (!GetCurrentDirectory(MAX_PATH, originalDir))
     {
-        // The string needs to be created and formatted before passing it to the MessageBox
-        wchar_t message[512];
-        swprintf(message, sizeof(message) / sizeof(wchar_t), L"CARMA95.exe path: %s\nDLL path: %s", exePath, dllPath);
-
-        // Open a dialogue window with information
-        MessageBox(NULL, message, L"Munging Successful", MB_OK | MB_ICONINFORMATION);
+        std::cerr << "Failed to get current directory." << std::endl;
+        MessageBox(NULL, L"Failed to get current directory.", L"Error", MB_OK | MB_ICONERROR);
+        return;
+    }
+    // Set the current directory to CARMA95's install location
+    if (!SetCurrentDirectory(exeDir))
+    {
+        std::cerr << "Failed to set current directory to " << exeDir << std::endl;
+        MessageBox(NULL, L"Failed to set current directory.", L"Error", MB_OK | MB_ICONERROR);
+        return;
     }
     else
     {
-        // Error attaching detour
-        MessageBox(NULL, L"An error occurred while feverishly munging. What might that error be? The world may never know!", L"Munging Error", MB_OK | MB_ICONERROR);
+        // Display a message box showing the new directory path
+        MessageBox(NULL, exeDir, L"Current Directory Set", MB_OK | MB_ICONINFORMATION);
+    }
+
+    // Create the process in a suspended state
+    if (!CreateProcessW(exePath, NULL, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, exeDir, &si, &pi))
+    {
+        std::cerr << "Failed to create process." << std::endl;
+        MessageBox(NULL, L"Failed to create process.", L"Process Creation Error", MB_OK | MB_ICONERROR);
         return;
     }
+
+    // Restore the original working directory after operations are complete
+    if (!SetCurrentDirectory(originalDir))
+    {
+        std::cerr << "Failed to restore original working directory." << std::endl;
+        MessageBox(NULL, L"Failed to restore original working directory.", L"Error", MB_OK | MB_ICONERROR);
+    }
+
+    DWORD processId = pi.dwProcessId;
+
+    // Inject the DLL into the process
+    NTSTATUS result = RhInjectLibrary(
+        processId,
+        0,
+        EASYHOOK_INJECT_DEFAULT,
+        NULL,
+        dllFullPath, // Use the full path to the DLL
+        NULL,
+        NULL);
+
+    if (result == 5)
+    {
+        // Error occurred while injecting the DLL
+        wchar_t message[512];
+        swprintf(message, sizeof(message) / sizeof(wchar_t), L"%s DLL Loading Path: %s", RtlGetLastErrorString(), dllFullPath);
+
+        MessageBox(NULL, message, L"DLL Munging Error", MB_OK | MB_ICONERROR);
+
+        // Clean up process handles before returning
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+
+        // Log the error
+        std::cerr << "Failed to inject DLL. Error: " << result << std::endl;
+        return;
+    }
+
+    // Resume the main thread of the process
+    ResumeThread(pi.hThread);
+
+    // Close process and thread handles
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    // Prepare a message with the paths and show a success message box
+    wchar_t message[512];
+    swprintf(message, sizeof(message) / sizeof(wchar_t), L"CARMA95.exe path: %s\nDLL path: %s", exePath, dllFullPath);
+
+    MessageBox(NULL, message, L"Munging Successful", MB_OK | MB_ICONINFORMATION);
 }
 
 //
@@ -221,7 +289,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
     case WM_COMMAND:
         {
-            LPCWSTR carmaExePath = L"CARMA95.exe";
+            LPCWSTR carmaExePath = L"F:/SteamLibrary/steamapps/common/Carmageddon1/MELDPACK/CARMA95.exe";
             LPCWSTR dAIannaHookPath = L"dAIannaHook.dll";
             int wmId = LOWORD(wParam);
             // Parse the menu selections:
