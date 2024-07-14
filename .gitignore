@@ -7,7 +7,12 @@ __pycache__/
 pyvenv.cfg
 screencap_template2.png
 beamconnector.py
-dAIannaHook/packages
-dAIannaHook/x64
-dAIannaHook/dAIannaHook
-dAIannaHook/.vs
+dAIannaLoader/packages
+dAIannaLoader/x64
+dAIannaLoader/dAIannaHook
+dAIannaLoader/.vs
+dAIannaLoader/Debug
+dAIannaLoader/dAIannaInjector/x64
+dAIannaLoader/dAIannaInjector/Debug
+dAIannaLoader/dAIannaHook/x64
+dAIannaLoader/dAIannaHook/Debug
