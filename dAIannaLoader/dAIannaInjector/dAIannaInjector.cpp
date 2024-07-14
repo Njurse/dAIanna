@@ -241,7 +241,7 @@ void StartMunging(LPCWSTR exePath, LPCWSTR dllPath)
         NULL,
         NULL);
 
-    if (result == 5)
+    if (result != 0)
     {
         // Error occurred while injecting the DLL
         wchar_t message[512];
