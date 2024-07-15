@@ -6,6 +6,7 @@
 #include "Windows.h"
 #include <easyhook.h>
 #include <iostream>
+#include <ntstatus.h>
 #include <shlwapi.h>
 #pragma comment(lib, "EasyHook32.lib")
 #pragma comment(lib, "Shlwapi.lib")
@@ -178,7 +179,6 @@ void StartMunging(LPCWSTR exePath, LPCWSTR dllPath)
     STARTUPINFO si = { sizeof(STARTUPINFO) };
     PROCESS_INFORMATION pi;
 
-    // Extract the directory from the exePath
     // Get the full path to the EXE
     WCHAR exeFullPath[MAX_PATH];
     GetFullPathNameW(exePath, MAX_PATH, exeFullPath, nullptr);
@@ -192,7 +192,6 @@ void StartMunging(LPCWSTR exePath, LPCWSTR dllPath)
     WCHAR dllFullPath[MAX_PATH];
     GetFullPathNameW(dllPath, MAX_PATH, dllFullPath, nullptr);
 
-
     // Get the current working directory to restore later
     WCHAR originalDir[MAX_PATH];
     if (!GetCurrentDirectory(MAX_PATH, originalDir))
@@ -201,17 +200,13 @@ void StartMunging(LPCWSTR exePath, LPCWSTR dllPath)
         MessageBox(NULL, L"Failed to get current directory.", L"Error", MB_OK | MB_ICONERROR);
         return;
     }
-    // Set the current directory to CARMA95's install location
+
+    // Set the current directory to the EXE's directory
     if (!SetCurrentDirectory(exeDir))
     {
         std::cerr << "Failed to set current directory to " << exeDir << std::endl;
         MessageBox(NULL, L"Failed to set current directory.", L"Error", MB_OK | MB_ICONERROR);
         return;
-    }
-    else
-    {
-        // Display a message box showing the new directory path
-        MessageBox(NULL, exeDir, L"Current Directory Set", MB_OK | MB_ICONINFORMATION);
     }
 
     // Create the process in a suspended state
@@ -229,6 +224,7 @@ void StartMunging(LPCWSTR exePath, LPCWSTR dllPath)
         MessageBox(NULL, L"Failed to restore original working directory.", L"Error", MB_OK | MB_ICONERROR);
     }
 
+    // Get the process ID for DLL injection
     DWORD processId = pi.dwProcessId;
 
     // Inject the DLL into the process
@@ -236,8 +232,8 @@ void StartMunging(LPCWSTR exePath, LPCWSTR dllPath)
         processId,
         0,
         EASYHOOK_INJECT_DEFAULT,
-        NULL,
-        dllFullPath, // Use the full path to the DLL
+        dllFullPath,
+        NULL, // Use the full path to the DLL
         NULL,
         NULL);
 
@@ -245,7 +241,7 @@ void StartMunging(LPCWSTR exePath, LPCWSTR dllPath)
     {
         // Error occurred while injecting the DLL
         wchar_t message[512];
-        swprintf(message, sizeof(message) / sizeof(wchar_t), L"%s DLL Loading Path: %s", RtlGetLastErrorString(), dllFullPath);
+        swprintf(message, sizeof(message) / sizeof(wchar_t), L"%s\nDLL Loading Path: %s", RtlGetLastErrorString(), dllFullPath);
 
         MessageBox(NULL, message, L"DLL Munging Error", MB_OK | MB_ICONERROR);
 
@@ -266,11 +262,10 @@ void StartMunging(LPCWSTR exePath, LPCWSTR dllPath)
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
 
-    // Prepare a message with the paths and show a success message box
-    wchar_t message[512];
-    swprintf(message, sizeof(message) / sizeof(wchar_t), L"CARMA95.exe path: %s\nDLL path: %s", exePath, dllFullPath);
-
-    MessageBox(NULL, message, L"Munging Successful", MB_OK | MB_ICONINFORMATION);
+    // Display success message with paths
+    wchar_t successMessage[512];
+    swprintf(successMessage, sizeof(successMessage) / sizeof(wchar_t), L"CARMA95.exe path: %s\nDLL path: %s", exePath, dllFullPath);
+    MessageBox(NULL, successMessage, L"Munging Successful", MB_OK | MB_ICONINFORMATION);
 }
 
 //
@@ -290,7 +285,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_COMMAND:
         {
             LPCWSTR carmaExePath = L"F:/SteamLibrary/steamapps/common/Carmageddon1/MELDPACK/CARMA95.exe";
-            LPCWSTR dAIannaHookPath = L"dAIannaHook.dll";
+            LPCWSTR dAIannaHookPath = L".\\dAIannaHook.dll";
             int wmId = LOWORD(wParam);
             // Parse the menu selections:
             switch (wmId)

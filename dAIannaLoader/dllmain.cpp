@@ -1,71 +1,98 @@
-#include <Windows.h>
 #include "pch.h"
-#include <GL/gl.h>
-#include <GL/glu.h>
-#include <easyhook.h>
-#include <iostream>
-#include <fstream>
+#include <Windows.h>
+#include <GL/GL.h>
+#include <GL/GLU.h>
+#include "easyhook.h"
+#include <string>
+#include <ntstatus.h>
+#pragma comment(lib, "OpenGL32.lib")
 #pragma comment(lib, "EasyHook32.lib")
 
-//Current plan is injecting dAIannaHook.dll into CARMA95.exe to extract game information and relay it over an io pipe to dAIanna.py
 #define PIPE_NAME "\\\\.\\pipe\\daianna_pipe"
 
 typedef void(APIENTRY* glDrawElements_t)(GLenum mode, GLsizei count, GLenum type, const void* indices);
 glDrawElements_t original_glDrawElements = NULL;
 
-//Draw to the screen at given coordinates (draw functionality implementation if for whatever reason it is needed besides debugging)
-void RenderIndicator(float x, float y, float size) {
-    // Example: Render a colored triangle
-    glBegin(GL_TRIANGLES);
-    glColor3f(1.0f, 0.0f, 0.0f); // Red color
-    glVertex2f(x, y);
-    glVertex2f(x + size, y);
-    glVertex2f(x + size / 2, y + size);
-    glEnd();
-}
-
 void SendDataToPipe(const void* data, size_t size) {
-    HANDLE hPipe = CreateFileA(
-        PIPE_NAME,          // pipe name
-        GENERIC_WRITE,      // write access
-        0,                  // no sharing
-        NULL,               // default security attributes
-        OPEN_EXISTING,      // opens existing pipe
-        0,                  // default attributes
-        NULL);              // no template file
-
+    HANDLE hPipe = CreateFileA(PIPE_NAME, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
     if (hPipe != INVALID_HANDLE_VALUE) {
         DWORD written;
-        WriteFile(hPipe, data, size, &written, NULL);
-        printf("%lu bytes written\n", written);
+        WriteFile(hPipe, data, static_cast<DWORD>(size), &written, NULL);
+        char buffer[256];
+        sprintf_s(buffer, "%lu bytes written\n", written);
+        OutputDebugStringA(buffer);
         CloseHandle(hPipe);
     }
     else {
-        // Handle error if needed
+        OutputDebugStringA("Failed to open pipe\n");
     }
 }
 
 void APIENTRY Hooked_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
-    // Capture vertex data here
-    // For example, we can send the indices data to the pipe
-    SendDataToPipe(indices, count * sizeof(type));  // Adjust size as necessary
-    RenderIndicator(64.0f, 64.0f, 32.0f);
-    // Call the original function
+    size_t dataSize;
+    switch (type) {
+    case GL_UNSIGNED_BYTE:  dataSize = sizeof(GLubyte);  break;
+    case GL_UNSIGNED_SHORT: dataSize = sizeof(GLushort); break;
+    case GL_UNSIGNED_INT:   dataSize = sizeof(GLuint);   break;
+    default: dataSize = 0; break;
+    }
+    if (dataSize > 0) {
+        SendDataToPipe(indices, count * dataSize);
+    }
     original_glDrawElements(mode, count, type, indices);
 }
 
 void HookOpenGLFunctions() {
+    OutputDebugStringA("HookOpenGLFunctions called");
+    HMODULE hModule = GetModuleHandle(L"opengl32.dll");
+    if (hModule) {
+        original_glDrawElements = (glDrawElements_t)GetProcAddress(hModule, "glDrawElements");
+        if (original_glDrawElements) {
+            NTSTATUS status = LhInstallHook(original_glDrawElements, Hooked_glDrawElements, NULL, NULL);
+            if (status == STATUS_SUCCESS) {
+                OutputDebugStringA("Hook installed successfully");
+                ULONG ACLEntries[1] = { 0 };
+                LhSetInclusiveACL(ACLEntries, 1, NULL);
+            }
+            else {
+                char buffer[256];
+                sprintf_s(buffer, "Failed to install hook: 0x%X\n", status);
+                OutputDebugStringA(buffer);
+            }
+        }
+        else {
+            OutputDebugStringA("glDrawElements not found in this process");
+        }
+    }
+    else {
+        OutputDebugStringA("opengl32.dll not found");
+    }
+}
 
-    return;
+extern "C" void __stdcall NativeInjectionEntryPoint(REMOTE_ENTRY_INFO* inRemoteInfo)
+{
+    try {
+        OutputDebugStringA("NativeInjectionEntryPoint called");
+        HookOpenGLFunctions();
+    }
+    catch (const std::exception& e) {
+        char buffer[256];
+        sprintf_s(buffer, "Exception in NativeInjectionEntryPoint: %s", e.what());
+        OutputDebugStringA(buffer);
+        LogError(buffer);
+    }
+    catch (...) {
+        OutputDebugStringA("Unknown exception in NativeInjectionEntryPoint");
+        LogError("Unknown exception in NativeInjectionEntryPoint");
+    }
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
     switch (ul_reason_for_call) {
     case DLL_PROCESS_ATTACH:
-        HookOpenGLFunctions();
+        DisableThreadLibraryCalls(hModule);
         break;
     case DLL_PROCESS_DETACH:
-        // Cleanup
         break;
     }
     return TRUE;
