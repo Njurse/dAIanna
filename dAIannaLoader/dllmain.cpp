@@ -69,25 +69,23 @@ void HookOpenGLFunctions() {
     }
 }
 
-extern "C" void __stdcall NativeInjectionEntryPoint(REMOTE_ENTRY_INFO* inRemoteInfo)
-{
+/*
+extern "C" void __stdcall NativeInjectionEntryPoint(REMOTE_ENTRY_INFO* inRemoteInfo) {
     try {
         OutputDebugStringA("NativeInjectionEntryPoint called");
         HookOpenGLFunctions();
     }
     catch (const std::exception& e) {
-        char buffer[256];
+        char buffer[256]; 
         sprintf_s(buffer, "Exception in NativeInjectionEntryPoint: %s", e.what());
         OutputDebugStringA(buffer);
-        LogError(buffer);
     }
     catch (...) {
         OutputDebugStringA("Unknown exception in NativeInjectionEntryPoint");
-        LogError("Unknown exception in NativeInjectionEntryPoint");
     }
 }
-
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
+*/
+BOOL WINAPI DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
     switch (ul_reason_for_call) {
     case DLL_PROCESS_ATTACH:
         DisableThreadLibraryCalls(hModule);
