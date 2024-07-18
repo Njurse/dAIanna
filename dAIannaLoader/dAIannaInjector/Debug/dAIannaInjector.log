@@ -66,4 +66,5 @@ C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\shared\ntstatus.h(11
 C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\shared\ntstatus.h(15048,9): warning C4005: 'STATUS_SXS_EARLY_DEACTIVATION': macro redefinition
 C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\shared\ntstatus.h(15057,9): warning C4005: 'STATUS_SXS_INVALID_DEACTIVATION': macro redefinition
 F:\dAIanna\dAIannaLoader\dAIannaInjector\dAIannaInjector.cpp(128,17): warning C4244: 'initializing': conversion from 'double' to 'int', possible loss of data
+F:\dAIanna\dAIannaLoader\dAIannaInjector\dAIannaInjector.cpp(266,13): warning C4101: 'successMessage': unreferenced local variable
   dAIannaInjector.vcxproj -> F:\dAIanna\dAIannaLoader\Debug\dAIannaInjector.exe

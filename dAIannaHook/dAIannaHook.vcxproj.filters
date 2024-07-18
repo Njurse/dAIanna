@@ -21,12 +21,6 @@
     <ClInclude Include="pch.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\dAIannaBFInjector\BFInjector.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="functionhookheaders.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">

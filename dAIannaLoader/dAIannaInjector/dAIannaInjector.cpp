@@ -264,8 +264,9 @@ void StartMunging(LPCWSTR exePath, LPCWSTR dllPath)
 
     // Display success message with paths
     wchar_t successMessage[512];
-    swprintf(successMessage, sizeof(successMessage) / sizeof(wchar_t), L"CARMA95.exe path: %s\nDLL path: %s", exePath, dllFullPath);
-    MessageBox(NULL, successMessage, L"Munging Successful", MB_OK | MB_ICONINFORMATION);
+
+    //The success message was removed from here and added to the DLL to ensure it's actually running
+
 }
 
 //
@@ -284,7 +285,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
     case WM_COMMAND:
         {
-            LPCWSTR carmaExePath = L"F:/SteamLibrary/steamapps/common/Carmageddon1/MELDPACK/CARMA95.exe";
+            LPCWSTR carmaExePath = L"F:/SteamLibrary/steamapps/common/Carmageddon1/MELDPACK/dethrace.exe";
             LPCWSTR dAIannaHookPath = L".\\dAIannaHook.dll";
             int wmId = LOWORD(wParam);
             // Parse the menu selections:

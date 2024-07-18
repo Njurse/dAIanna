@@ -1,97 +1,78 @@
 #include "pch.h"
 #include <Windows.h>
-#include <GL/GL.h>
-#include <GL/GLU.h>
+#include <ddraw.h> // DirectDraw header
 #include "easyhook.h"
-#include <string>
-#include <ntstatus.h>
-#pragma comment(lib, "OpenGL32.lib")
-#pragma comment(lib, "EasyHook32.lib")
+#include <iostream>
+#include <fstream>
 
-#define PIPE_NAME "\\\\.\\pipe\\daianna_pipe"
+// Original DirectDraw function prototype
+typedef HRESULT(WINAPI* Blt_t)(LPDIRECTDRAWSURFACE lpDDSurfaceDest, LPRECT lpDestRect, LPDIRECTDRAWSURFACE lpDDSurfaceSrc, LPRECT lpSrcRect, DWORD dwFlags, LPDDBLTFX lpDDBltFx);
 
-typedef void(APIENTRY* glDrawElements_t)(GLenum mode, GLsizei count, GLenum type, const void* indices);
-glDrawElements_t original_glDrawElements = NULL;
+// Original DirectDraw function prototypes
+typedef HRESULT(WINAPI* Blt_t)(LPDIRECTDRAWSURFACE, LPRECT, LPDIRECTDRAWSURFACE, LPRECT, DWORD, LPDDBLTFX);
+typedef HRESULT(WINAPI* Flip_t)(LPDIRECTDRAWSURFACE, LPDIRECTDRAWSURFACE, DWORD);
 
-void SendDataToPipe(const void* data, size_t size) {
-    HANDLE hPipe = CreateFileA(PIPE_NAME, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
-    if (hPipe != INVALID_HANDLE_VALUE) {
-        DWORD written;
-        WriteFile(hPipe, data, static_cast<DWORD>(size), &written, NULL);
-        char buffer[256];
-        sprintf_s(buffer, "%lu bytes written\n", written);
-        OutputDebugStringA(buffer);
-        CloseHandle(hPipe);
+// Pointers to the original functions
+Blt_t OriginalBlt = NULL;
+Flip_t OriginalFlip = NULL;
+
+
+// Hook function for Blt
+HRESULT WINAPI HookedBlt(LPDIRECTDRAWSURFACE lpDDSurfaceDest, LPRECT lpDestRect, LPDIRECTDRAWSURFACE lpDDSurfaceSrc, LPRECT lpSrcRect, DWORD dwFlags, LPDDBLTFX lpDDBltFx) {
+    // Log the data to a file or perform other actions
+    std::ofstream logFile("ddraw_hook_log.txt", std::ios::out | std::ios::app);
+    if (logFile.is_open()) {
+        logFile << "Hooked Blt function called." << std::endl;
+        // Optionally log parameters or other relevant information
+        logFile.close();
     }
     else {
-        OutputDebugStringA("Failed to open pipe\n");
+        std::cerr << "Failed to open log file for writing!" << std::endl;
     }
-}
 
-void APIENTRY Hooked_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
-    size_t dataSize;
-    switch (type) {
-    case GL_UNSIGNED_BYTE:  dataSize = sizeof(GLubyte);  break;
-    case GL_UNSIGNED_SHORT: dataSize = sizeof(GLushort); break;
-    case GL_UNSIGNED_INT:   dataSize = sizeof(GLuint);   break;
-    default: dataSize = 0; break;
-    }
-    if (dataSize > 0) {
-        SendDataToPipe(indices, count * dataSize);
-    }
-    original_glDrawElements(mode, count, type, indices);
-}
-
-void HookOpenGLFunctions() {
-    OutputDebugStringA("HookOpenGLFunctions called");
-    HMODULE hModule = GetModuleHandle(L"opengl32.dll");
-    if (hModule) {
-        original_glDrawElements = (glDrawElements_t)GetProcAddress(hModule, "glDrawElements");
-        if (original_glDrawElements) {
-            NTSTATUS status = LhInstallHook(original_glDrawElements, Hooked_glDrawElements, NULL, NULL);
-            if (status == STATUS_SUCCESS) {
-                OutputDebugStringA("Hook installed successfully");
-                ULONG ACLEntries[1] = { 0 };
-                LhSetInclusiveACL(ACLEntries, 1, NULL);
-            }
-            else {
-                char buffer[256];
-                sprintf_s(buffer, "Failed to install hook: 0x%X\n", status);
-                OutputDebugStringA(buffer);
-            }
-        }
-        else {
-            OutputDebugStringA("glDrawElements not found in this process");
-        }
+    // Call the original function
+    if (OriginalBlt) {
+        return OriginalBlt(lpDDSurfaceDest, lpDestRect, lpDDSurfaceSrc, lpSrcRect, dwFlags, lpDDBltFx);
     }
     else {
-        OutputDebugStringA("opengl32.dll not found");
+        return E_FAIL; // Handle error if OriginalBlt is not valid
     }
 }
 
-/*
-extern "C" void __stdcall NativeInjectionEntryPoint(REMOTE_ENTRY_INFO* inRemoteInfo) {
-    try {
-        OutputDebugStringA("NativeInjectionEntryPoint called");
-        HookOpenGLFunctions();
+// Function to install the hook
+extern "C" void __declspec(dllexport) __stdcall NativeInjectionEntryPoint(REMOTE_ENTRY_INFO* inRemoteInfo);
+void __stdcall NativeInjectionEntryPoint(REMOTE_ENTRY_INFO* inRemoteInfo) {
+    // Initialize EasyHook
+    HMODULE hModule = LoadLibrary(L"ddraw.dll"); // Replace with actual module name
+    if (hModule == NULL) {
+        MessageBox(NULL, L"Failed to get module handle!", L"Error", MB_OK | MB_ICONERROR);
+        return;
     }
-    catch (const std::exception& e) {
-        char buffer[256]; 
-        sprintf_s(buffer, "Exception in NativeInjectionEntryPoint: %s", e.what());
-        OutputDebugStringA(buffer);
+
+    // Install hook for Blt function
+    if (FAILED(LhInstallHook(
+        GetProcAddress(hModule, "Blt"),
+        HookedBlt,
+        NULL,
+        reinterpret_cast<HOOK_TRACE_INFO*>(&OriginalBlt)
+    ))) {
+        MessageBox(NULL, L"Failed to install hook for Blt function!", L"Error", MB_OK | MB_ICONERROR);
+        return;
     }
-    catch (...) {
-        OutputDebugStringA("Unknown exception in NativeInjectionEntryPoint");
+
+    // Enable the hook
+    HOOK_TRACE_INFO hookInfo = { NULL }; // Initialize hook info structure
+    ULONG aclEntries[1] = { 0 }; // Example ACL with one entry
+    if (FAILED(LhSetExclusiveACL(aclEntries, 1, &hookInfo))) {
+        MessageBox(NULL, L"Failed to enable hook!", L"Error", MB_OK | MB_ICONERROR);
+        exit(1);
+            
     }
-}
-*/
-BOOL WINAPI DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
-    switch (ul_reason_for_call) {
-    case DLL_PROCESS_ATTACH:
-        DisableThreadLibraryCalls(hModule);
-        break;
-    case DLL_PROCESS_DETACH:
-        break;
-    }
-    return TRUE;
-}
+
+    MessageBox(
+        NULL,
+        L"dAIannaHook.dll successfully injected inside of dethrace.exe",
+        L"dAIannaHook is now running!",
+        MB_OK | MB_ICONWARNING
+    );
+} 
