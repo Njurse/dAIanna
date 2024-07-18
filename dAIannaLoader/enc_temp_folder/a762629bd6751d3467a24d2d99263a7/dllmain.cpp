@@ -98,6 +98,10 @@ void InstallHooks() {
     ))) {
         MessageBox(NULL, L"Failed to hook Blt!", L"Error", MB_OK | MB_ICONERROR);
     }
+    if (OriginalBlt)
+    {
+        MessageBox(NULL, L"Fail32523523235ed to hook DirectDrawCreateEx!", L"Error", MB_OK | MB_ICONERROR);
+    }
 
     // Activate hooks for all threads
     ULONG ACLEntries[1] = { 0 };
