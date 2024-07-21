@@ -1,119 +1,119 @@
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <detours.h>
 #include "pch.h"
-#include <Windows.h>
-#include <ddraw.h>
-#include "easyhook.h"
-#include <string>
-#include <iostream>
-#include <ntstatus.h>
+#include <cstdio>
+#include <cstdlib>
+#include <functional>
+#include <unordered_map>
+#include <vector>
 
-#pragma comment(lib, "EasyHook32.lib")
+extern "C" {
 
-// Function pointer types for the DirectDraw functions
-typedef HRESULT(WINAPI* DirectDrawCreate_t)(GUID*, LPDIRECTDRAW*, IUnknown*);
-typedef HRESULT(WINAPI* DirectDrawCreateEx_t)(GUID*, LPVOID*, REFIID, IUnknown*);
-typedef HRESULT(WINAPI* CreateSurface_t)(LPDIRECTDRAW, LPDDSURFACEDESC, LPDIRECTDRAWSURFACE*, IUnknown*);
-typedef HRESULT(WINAPI* Blt_t)(LPDIRECTDRAWSURFACE, LPRECT, LPDIRECTDRAWSURFACE, LPRECT, DWORD, LPDDBLTFX);
+    typedef struct hook_function_information {
+        void** victim;
+        void* original_victim;
+        void* detour;
+        const char* victimname;
+        const char* detourname;
+    } hook_function_information;
 
-// Original function pointers
-DirectDrawCreate_t OriginalDirectDrawCreate = NULL;
-DirectDrawCreateEx_t OriginalDirectDrawCreateEx = NULL;
-CreateSurface_t OriginalCreateSurface = NULL;
-Blt_t OriginalBlt = NULL;
+    static std::vector<std::function<void(void)>> hook_startups;
+    static std::vector<hook_function_information> hook_function_startups;
+    static std::vector<hook_function_information> hook_function_shutdowns;
 
-// Hooked functions
-HRESULT WINAPI HookedDirectDrawCreate(GUID* lpGUID, LPDIRECTDRAW* lplpDD, IUnknown* pUnkOuter) {
-    MessageBox(NULL, L"DirectDrawCreate called", L"Hooked Function", MB_OK | MB_ICONINFORMATION);
-    return OriginalDirectDrawCreate(lpGUID, lplpDD, pUnkOuter);
-}
-
-HRESULT WINAPI HookedDirectDrawCreateEx(GUID* lpGUID, LPVOID* lplpDD, REFIID iid, IUnknown* pUnkOuter) {
-    MessageBox(NULL, L"DirectDrawCreateEx called", L"Hooked Function", MB_OK | MB_ICONINFORMATION);
-    return OriginalDirectDrawCreateEx(lpGUID, lplpDD, iid, pUnkOuter);
-}
-
-HRESULT WINAPI HookedCreateSurface(LPDIRECTDRAW lpDD, LPDDSURFACEDESC lpDDSurfaceDesc, LPDIRECTDRAWSURFACE* lplpDDSurface, IUnknown* pUnkOuter) {
-    MessageBox(NULL, L"CreateSurface called", L"Hooked Function", MB_OK | MB_ICONINFORMATION);
-    return OriginalCreateSurface(lpDD, lpDDSurfaceDesc, lplpDDSurface, pUnkOuter);
-}
-
-HRESULT WINAPI HookedBlt(LPDIRECTDRAWSURFACE lpDDSurfaceDest, LPRECT lpDestRect, LPDIRECTDRAWSURFACE lpDDSurfaceSrc, LPRECT lpSrcRect, DWORD dwFlags, LPDDBLTFX lpDDBltFx) {
-    MessageBox(NULL, L"Blt called", L"Hooked Function", MB_OK | MB_ICONINFORMATION);
-    return OriginalBlt(lpDDSurfaceDest, lpDestRect, lpDDSurfaceSrc, lpSrcRect, dwFlags, lpDDBltFx);
-}
-
-// Function to install hooks
-void InstallHooks() {
-    HMODULE hModule = LoadLibrary(L"ddraw.dll");
-    if (hModule == NULL) {
-        MessageBox(NULL, L"Failed to load ddraw.dll!", L"Error", MB_OK | MB_ICONERROR);
-        return;
+    void hook_register(void (*function)(void)) {
+        hook_startups.push_back(function);
     }
 
-    /*/ Hook DirectDrawCreate
-    OriginalDirectDrawCreate = reinterpret_cast<DirectDrawCreate_t>(GetProcAddress(hModule, "DirectDrawCreate"));
-    if (OriginalDirectDrawCreate && FAILED(LhInstallHook(
-        OriginalDirectDrawCreate,
-        HookedDirectDrawCreate,
-        NULL,
-        reinterpret_cast<HOOK_TRACE_INFO*>(&OriginalDirectDrawCreate)
-    ))) {
-        MessageBox(NULL, L"Failed to hook DirectDrawCreate!", L"Error", MB_OK | MB_ICONERROR);
-    }
-    */
-    // Hook DirectDrawCreateEx
-    OriginalDirectDrawCreateEx = reinterpret_cast<DirectDrawCreateEx_t>(GetProcAddress(hModule, "DirectDrawCreateEx"));
-    if (OriginalDirectDrawCreateEx && FAILED(LhInstallHook(
-        OriginalDirectDrawCreateEx,
-        HookedDirectDrawCreateEx,
-        NULL,
-        reinterpret_cast<HOOK_TRACE_INFO*>(&OriginalDirectDrawCreateEx)
-    ))) {
-        MessageBox(NULL, L"Failed to hook DirectDrawCreateEx!", L"Error", MB_OK | MB_ICONERROR);
+    const char* detour_errcode_to_string(LONG code) {
+        switch (code) {
+        case ERROR_INVALID_BLOCK:
+            return "ERROR_INVALID_BLOCK";
+        case ERROR_INVALID_HANDLE:
+            return "ERROR_INVALID_HANDLE";
+        case ERROR_INVALID_OPERATION:
+            return "ERROR_INVALID_OPERATION";
+        case ERROR_NOT_ENOUGH_MEMORY:
+            return "ERROR_NOT_ENOUGH_MEMORY";
+        default:
+            return "<unknown>";
+        }
     }
 
-    // Hook CreateSurface
-    OriginalCreateSurface = reinterpret_cast<CreateSurface_t>(GetProcAddress(hModule, "CreateSurface"));
-    if (OriginalCreateSurface)
-    {
-        if(FAILED(LhInstallHook(
-            OriginalCreateSurface,
-            HookedCreateSurface,
+    void hook_function_register(void** victim, void* detour, const char* victimname, const char* detourname) {
+        hook_function_startups.push_back({
+            victim,
+            *victim,
+            detour,
+            victimname,
+            detourname,
+            });
+    }
+
+    void hook_function_deregister(void** victim, void* detour) {
+        hook_function_shutdowns.push_back({
+            victim,
+            *victim,
+            detour,
             NULL,
-            reinterpret_cast<HOOK_TRACE_INFO*>(&OriginalCreateSurface)
-        ))) {
-            MessageBox(NULL, L"Failed to hook CreateSurface!", L"Error", MB_OK | MB_ICONERROR);
-        }
-        else {
-            MessageBox(NULL, L"CreateSurface!", L"Function Hooked", MB_OK | MB_ICONERROR);
+            NULL,
+            });
+    }
+
+    void hook_run_functions(void) {
+        for (const auto& hook_startup : hook_startups) {
+            hook_startup();
         }
     }
 
-    // Hook Blt
-    OriginalBlt = reinterpret_cast<Blt_t>(GetProcAddress(hModule, "Blt"));
-    if (OriginalBlt && FAILED(LhInstallHook(
-        OriginalBlt,
-        HookedBlt,
-        NULL,
-        reinterpret_cast<HOOK_TRACE_INFO*>(&OriginalBlt)
-    ))) {
-        MessageBox(NULL, L"Failed to hook Blt!", L"Error", MB_OK | MB_ICONERROR);
+    void hook_apply_all(void) {
+        FILE* f = fopen("hook.log", "w");
+        for (auto& info : hook_function_startups) {
+            fprintf(f, "Hooking %s (0x%p) with %s: ", info.victimname, info.original_victim, info.detourname);
+            fflush(f);
+            LONG r = DetourAttach(info.victim, info.detour);
+            if (r == NO_ERROR) {
+                fprintf(f, "SUCCESS!\n");
+            }
+            else {
+                fprintf(f, "ERROR! (code=%ld, txt=\"%s\")\n", r, detour_errcode_to_string(r));
+            }
+            fflush(f);
+        }
+        fclose(f);
+        f = NULL;
     }
 
-    // Activate hooks for all threads
-    ULONG ACLEntries[1] = { 0 };
-    LhSetInclusiveACL(ACLEntries, 1, reinterpret_cast<HOOK_TRACE_INFO*>(&OriginalDirectDrawCreate));
-    LhSetInclusiveACL(ACLEntries, 1, reinterpret_cast<HOOK_TRACE_INFO*>(&OriginalDirectDrawCreateEx));
-    LhSetInclusiveACL(ACLEntries, 1, reinterpret_cast<HOOK_TRACE_INFO*>(&OriginalCreateSurface));
-    LhSetInclusiveACL(ACLEntries, 1, reinterpret_cast<HOOK_TRACE_INFO*>(&OriginalBlt));
-}
+    void hook_check(void) {
+        bool problem = false;
+        std::unordered_map<uintptr_t, const hook_function_information*> detected_original_victims;
+        for (const auto& info : hook_function_startups) {
+            auto already_in = detected_original_victims.find((uintptr_t)info.original_victim);
+            if (already_in != detected_original_victims.end()) {
+                fprintf(stderr, "Already found a function at 0x%p.\n", info.original_victim);
+                problem = true;
+            }
+            detected_original_victims[(uintptr_t)info.original_victim] = &info;
+        }
+        if (problem) {
+            abort();
+        }
+    }
 
-// Entry point for the injected DLL
-extern "C" void __declspec(dllexport) __stdcall NativeInjectionEntryPoint(REMOTE_ENTRY_INFO* inRemoteInfo) {
-    InstallHooks();
-    MessageBox(
-        NULL,
-        L"dAIannaHook.dll successfully injected inside of CARMA95.exe",
-        L"dAIannaHook is now running!",
-        MB_OK | MB_ICONINFORMATION
-    );
+    void hook_unapply_all(void) {
+        for (auto& info : hook_function_shutdowns) {
+            DetourDetach(info.victim, info.detour);
+        }
+    }
+
+    void hook_print_stats(void) {
+        printf("===================================================\n");
+        printf("Plugin name: %s\n", PLUGIN_NAME);
+        printf("Hook count: %d\n", (int)hook_startups.size());
+        printf("Function hook startup count: %d\n", (int)hook_function_startups.size());
+        printf("Function hook startup count: %d\n", (int)hook_function_shutdowns.size());
+        printf("===================================================\n");
+    }
+
 }
