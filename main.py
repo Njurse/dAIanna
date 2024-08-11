@@ -167,4 +167,4 @@ if __name__ == "__main__":
     daianna_intro.play_intro()
     depth_module.initialize_midas()
     depth_module.process_video("sample_input.mkv")
-    #main() is commented out at the moment because we can test mapping from a video then when everything is correct and tracing as it should the video can be swapped for opencv capture
+    #main() #is commented out at the moment because we can test mapping from a video then when everything is correct and tracing as it should the video can be swapped for opencv capture
