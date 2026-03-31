@@ -1,170 +1,85 @@
+import argparse
+import time
+
 import cv2
 import numpy as np
-import pygetwindow as gw
 import pyautogui
-import time
-import depth_module
+import pygetwindow as gw
+
 import daianna_intro
+import depth_module
 
-def grab_window(window_title):
-    try:
-        # Find the window by title
-        window = gw.getWindowsWithTitle(window_title)[0]
-        
-        # Activate the window (focus)
-        #window.activate()
 
-        # Get the coordinates of the window
-        left, top, width, height = window.left, window.top, window.width, window.height
+CAPTURE_SIZE = (640, 480)
 
-        # Capture screenshot of the window
-        screen = pyautogui.screenshot(region=(left, top, 642, 507))
-        screen = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
 
-        return screen
+def grab_window(window_title: str, size: tuple[int, int] = CAPTURE_SIZE):
+    windows = gw.getWindowsWithTitle(window_title)
+    if not windows:
+        return None
 
-    except IndexError:
-        raise Exception(f"Window not found: {window_title}")
-        
-# Function to check if HUD is detected
-def is_hud_detected(screen):
-    # Load the template image (HUD screenshot)
-    template = cv2.imread('hud_template.png', cv2.IMREAD_COLOR)
-    
-    # Convert images to grayscale
-    screen_gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
-    template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-    
-    # Perform template matching
-    result = cv2.matchTemplate(screen_gray, template_gray, cv2.TM_CCOEFF_NORMED)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-    
-    # Threshold for match detection (adjust as needed)
-    threshold = 0.6
-    #print(f"HUD similarity: {cv2.minMaxLoc(result)}")    
-    # Check if match is found
-    if max_val >= threshold:
-        return True
-    else:
-        return False      
-def create_hud_mask(screen):
-    # Load the template image (HUD screenshot)
-    template = cv2.imread('hud_template.png', cv2.IMREAD_COLOR)
-    
-    # Convert images to grayscale
-    screen_gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
-    template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-    
-    # Perform template matching
-    result = cv2.matchTemplate(screen_gray, template_gray, cv2.TM_CCOEFF_NORMED)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-    
-    # Threshold for match detection (adjust as needed)
-    threshold = 0.60
-    #print(f"HUD similarity: {cv2.minMaxLoc(result)}")
-    
-    # Create a mask based on the matching result
-    mask = np.ones_like(screen_gray, dtype=np.uint8)
-    
-    if max_val >= threshold:
-        # Get the location of the HUD
-        hud_top_left = max_loc
-        hud_bottom_right = (max_loc[0] + template.shape[1], max_loc[1] + template.shape[0])
-        
-        # Set the HUD area in the mask to 0
-        mask[hud_top_left[1]:hud_bottom_right[1], hud_top_left[0]:hud_bottom_right[0]] = 0
-    
-    return mask
+    window = windows[0]
+    left, top = window.left, window.top
+    width, height = size
 
-def grab_game_screenshot_nohud(screen):
-    # Create the HUD mask
-    mask = create_hud_mask(screen)
-    
-    # Apply the mask to the screenshot to avoid capturing the HUD
-    no_hud_screen = cv2.bitwise_and(screen, screen, mask=mask)
-    
-    return no_hud_screen        
+    screenshot = pyautogui.screenshot(region=(left, top, width, height))
+    frame = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+    return frame
 
-def is_main_menu_detected(screen):
-    # Load the template image (main menu screenshot)
-    template = cv2.imread('menu_template.png', cv2.IMREAD_COLOR)
-    
-    # Convert images to grayscale
-    screen_gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
-    template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-    
-    # Perform template matching
-    result = cv2.matchTemplate(screen_gray, template_gray, cv2.TM_CCOEFF_NORMED)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-    
-    # Threshold for match detection (adjust as needed)
-    threshold = 0.8
-    
-    # Check if match is found
-    if max_val >= threshold:
-        return True
-    else:
-        return False
 
-def preprocess_screen(screen, template):
-    # Extract alpha channel from template image
-    alpha_channel = template[:, :, 3]
+def run_live(window_title: str, depth_method: str = "fast"):
+    print(f"Starting live capture for '{window_title}' using '{depth_method}' depth mode...")
+    while True:
+        frame = grab_window(window_title)
+        if frame is None:
+            print(f"Waiting for window: {window_title}")
+            time.sleep(0.5)
+            continue
 
-    # Create mask from alpha channel
-    mask = alpha_channel > 0  # Mask will be True where alpha > 0 (non-transparent)
+        result = depth_module.reconstruct_environment(frame, depth_method=depth_method)
+        depth_module.visualize_result(result)
 
-    # Apply mask to screen capture
-    masked_screen = np.zeros_like(screen, dtype=np.uint8)
-    masked_screen[mask] = screen[mask]
+        cv2.imshow("CARMA95 Capture", frame)
+        cv2.imshow("Depth (raw)", result.depth_map)
+        cv2.imshow("Depth (perspective-corrected)", result.corrected_depth_map)
 
-    return masked_screen
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+
+    cv2.destroyAllWindows()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="dAIanna runtime for CARMA95.exe")
+    parser.add_argument("--window", default="CARMA95.exe", help="Window title to capture.")
+    parser.add_argument(
+        "--mode",
+        choices=["live", "video"],
+        default="live",
+        help="Run against a live game window or a video file.",
+    )
+    parser.add_argument("--video", default="sample_input.mkv", help="Video path when --mode video is used.")
+    parser.add_argument(
+        "--depth",
+        choices=["fast", "midas"],
+        default="fast",
+        help="Depth estimation mode.",
+    )
+    return parser.parse_args()
+
 
 def main():
-    window_title = "Carmageddon"
-    print("Initializing main thread...") #to do: switch to proper logging, absolutely necessary if i decide async is required
-    try:
-        while True:
-            # Capture from the specific window
-            screen = grab_window(window_title)
-            if screen is None:
-                print("Issue capturing the window, skipping this generation.")
-                continue  # Skip this iteration if screen capture failed
-            else:
-                # Check if HUD is detected (preprocess only if not in main menu)
-                if not is_main_menu_detected(screen):
-                    hud_template = cv2.imread('hud_template.png', cv2.IMREAD_UNCHANGED)
-                    masked_screen = preprocess_screen(screen, hud_template)
-                    if is_hud_detected(masked_screen):
-                        #print("In-game HUD detected!")
-                        no_hud_screen = grab_game_screenshot_nohud(screen)
-                        color_screen = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
-                        depth_module.process_depth_mapping(no_hud_screen)
-                    else:
-                        continue
-                        #print("Not in-game and no menu detected.")
-                else:
-                    continue
-                    #print("Main menu detected!")
+    args = parse_args()
+    daianna_intro.play_intro()
 
-                # Display the captured screen
-                cv2.imshow('Game Screen', screen)
-                cv2.waitKey(1)  # Wait for 1 millisecond (non-blocking)
-            
-            # Check for 'q' key to exit loop and close window
-            #if cv2.waitKey(1) & 0xFF == ord('q'):
-                #break
-            
-            # Wait for 0.25 seconds (quarter second)
-            time.sleep(0.1)
+    if args.depth == "midas":
+        depth_module.initialize_midas()
 
-    except Exception as e:
-        print(f"Error: {e}")
+    if args.mode == "video":
+        depth_module.process_video(args.video, depth_method=args.depth)
+    else:
+        run_live(args.window, depth_method=args.depth)
 
-    finally:
-        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    daianna_intro.play_intro()
-    depth_module.initialize_midas()
-    depth_module.process_video("sample_input.mkv")
-    #main() #is commented out at the moment because we can test mapping from a video then when everything is correct and tracing as it should the video can be swapped for opencv capture
+    main()
