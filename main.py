@@ -77,9 +77,23 @@ def run_live(
         result = depth_module.reconstruct_environment(frame, depth_method=depth_method)
         depth_module.visualize_result(result)
 
-        cv2.imshow(f"CARMA Capture ({matched_title})", frame)
+        annotated = frame.copy()
+        hint = result.driving_hint
+        cv2.putText(
+            annotated,
+            f"Hint: {hint.command} ({hint.confidence:.2f})",
+            (10, 25),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
+
+        cv2.imshow(f"CARMA Capture ({matched_title})", annotated)
         cv2.imshow("Depth (raw)", result.depth_map)
         cv2.imshow("Depth (perspective-corrected)", result.corrected_depth_map)
+        cv2.imshow("Occupancy", result.occupancy_grid * 255)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break

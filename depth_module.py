@@ -1,11 +1,4 @@
-"""Fast scene reconstruction helpers for CARMA95.exe captures.
-
-This module intentionally favors throughput over photorealism:
-- lightweight depth estimation by default (no neural network required),
-- vectorized point-cloud backprojection,
-- perspective warp correction around an estimated horizon,
-- optional MiDaS support when available.
-"""
+"""Fast scene reconstruction helpers for CARMA95.exe captures."""
 
 from __future__ import annotations
 
@@ -34,12 +27,21 @@ class CameraIntrinsics:
 
 
 @dataclass(slots=True)
+class DrivingHint:
+    command: Literal["forward", "left", "right", "brake"]
+    confidence: float
+    sector_risk: dict[str, float]
+
+
+@dataclass(slots=True)
 class ReconstructionResult:
     depth_map: np.ndarray
     corrected_depth_map: np.ndarray
+    occupancy_grid: np.ndarray
     point_cloud: np.ndarray
     corrected_point_cloud: np.ndarray
     horizon_y: int
+    driving_hint: DrivingHint
     processing_ms: float
 
 
@@ -74,18 +76,15 @@ def initialize_midas() -> bool:
 
 
 def _estimate_depth_fast(frame_bgr: np.ndarray) -> np.ndarray:
-    """Fast depth proxy from luminance + edge attenuation (uint8)."""
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Darker + lower-screen pixels generally correlate with drivable surface in CARMA95.
     inv_luma = 255 - gray
     h, _ = gray.shape
     row_bias = np.linspace(0.3, 1.0, h, dtype=np.float32)[:, None]
 
     sobel = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-    sobel = np.abs(sobel)
-    sobel = cv2.normalize(sobel, None, 0.0, 1.0, cv2.NORM_MINMAX)
+    sobel = cv2.normalize(np.abs(sobel), None, 0.0, 1.0, cv2.NORM_MINMAX)
 
     depth = (inv_luma.astype(np.float32) * row_bias) * (1.0 - 0.25 * sobel)
     depth = cv2.normalize(depth, None, 0, 255, cv2.NORM_MINMAX)
@@ -121,27 +120,53 @@ def estimate_depth(frame_bgr: np.ndarray, method: Literal["fast", "midas"] = "fa
 
 
 def estimate_horizon(depth_map: np.ndarray) -> int:
-    """Estimate horizon by finding first row where far-depth density rises."""
     far_threshold = np.percentile(depth_map, 70)
-    mask = depth_map >= far_threshold
-    row_density = mask.mean(axis=1)
+    row_density = (depth_map >= far_threshold).mean(axis=1)
     candidates = np.where(row_density > np.percentile(row_density, 75))[0]
-    if len(candidates) == 0:
-        return depth_map.shape[0] // 2
-    return int(candidates[0])
+    return int(candidates[0]) if len(candidates) else depth_map.shape[0] // 2
 
 
 def perspective_warp_correction(depth_map: np.ndarray, horizon_y: int, strength: float = 0.35) -> np.ndarray:
-    """Row-wise warp that expands distant geometry and compresses near field."""
     h, _ = depth_map.shape
     rows = np.arange(h, dtype=np.float32)
     distance = np.clip(rows - float(horizon_y), 0.0, None)
-
-    # Scale near rows down slightly and far rows up to reduce perspective squash.
     scale = 1.0 + strength * np.tanh((distance - (h * 0.25)) / (h * 0.25))
     warped = depth_map.astype(np.float32) * scale[:, None]
     warped = cv2.normalize(warped, None, 0, 255, cv2.NORM_MINMAX)
     return warped.astype(np.uint8)
+
+
+def build_occupancy_grid(corrected_depth_map: np.ndarray, near_percentile: float = 65.0) -> np.ndarray:
+    """Create a binary near-obstacle map in image space."""
+    threshold = np.percentile(corrected_depth_map, near_percentile)
+    near = corrected_depth_map <= threshold
+    # Ignore sky/top region; driving hazards live near the lower 2/3.
+    h = corrected_depth_map.shape[0]
+    near[: h // 3, :] = False
+    return near.astype(np.uint8)
+
+
+def derive_driving_hint(occupancy_grid: np.ndarray) -> DrivingHint:
+    """Estimate risk in left/center/right sectors and emit a basic control hint."""
+    h, w = occupancy_grid.shape
+    bottom = occupancy_grid[h // 2 :, :]
+    thirds = [0, w // 3, (2 * w) // 3, w]
+
+    left_risk = float(bottom[:, thirds[0] : thirds[1]].mean())
+    center_risk = float(bottom[:, thirds[1] : thirds[2]].mean())
+    right_risk = float(bottom[:, thirds[2] : thirds[3]].mean())
+
+    risk = {"left": left_risk, "center": center_risk, "right": right_risk}
+    safest = min(risk, key=risk.get)
+
+    if center_risk < 0.12:
+        return DrivingHint(command="forward", confidence=float(1.0 - center_risk), sector_risk=risk)
+    if min(risk.values()) > 0.28:
+        return DrivingHint(command="brake", confidence=float(min(risk.values())), sector_risk=risk)
+
+    command = "left" if safest == "left" else "right" if safest == "right" else "forward"
+    confidence = float(1.0 - risk[safest])
+    return DrivingHint(command=command, confidence=confidence, sector_risk=risk)
 
 
 def build_intrinsics(width: int, height: int, fov_degrees: float = 74.0) -> CameraIntrinsics:
@@ -152,13 +177,11 @@ def build_intrinsics(width: int, height: int, fov_degrees: float = 74.0) -> Came
 def depth_to_point_cloud(depth_map: np.ndarray, intr: CameraIntrinsics, z_scale: float = 0.04) -> np.ndarray:
     h, w = depth_map.shape
     y, x = np.mgrid[0:h, 0:w]
-
     z = depth_map.astype(np.float32) * z_scale
+
     x3d = (x - intr.cx) * z / intr.fx
     y3d = (y - intr.cy) * z / intr.fy
-
-    points = np.stack((x3d, -y3d, z), axis=-1).reshape(-1, 3)
-    return points
+    return np.stack((x3d, -y3d, z), axis=-1).reshape(-1, 3)
 
 
 def reconstruct_environment(
@@ -172,19 +195,22 @@ def reconstruct_environment(
     depth = estimate_depth(frame, method=depth_method)
     horizon = estimate_horizon(depth)
     corrected_depth = perspective_warp_correction(depth, horizon)
+    occupancy = build_occupancy_grid(corrected_depth)
+    hint = derive_driving_hint(occupancy)
 
     intr = build_intrinsics(width=target_size[0], height=target_size[1])
     points = depth_to_point_cloud(depth, intr)
     corrected_points = depth_to_point_cloud(corrected_depth, intr)
 
-    elapsed_ms = (time.perf_counter() - t0) * 1000.0
     return ReconstructionResult(
         depth_map=depth,
         corrected_depth_map=corrected_depth,
+        occupancy_grid=occupancy,
         point_cloud=points,
         corrected_point_cloud=corrected_points,
         horizon_y=horizon,
-        processing_ms=elapsed_ms,
+        driving_hint=hint,
+        processing_ms=(time.perf_counter() - t0) * 1000.0,
     )
 
 
@@ -207,7 +233,9 @@ def visualize_result(result: ReconstructionResult, subsample: int = 8) -> None:
     pts = result.corrected_point_cloud[::subsample]
     _axis.scatter(pts[:, 0], pts[:, 1], pts[:, 2], c=pts[:, 2], cmap="inferno", s=1)
     _axis.set_title(
-        f"3D Environment Reconstruction | {result.processing_ms:.1f} ms | horizon={result.horizon_y}px"
+        "3D Environment | "
+        f"{result.processing_ms:.1f} ms | horizon={result.horizon_y}px | "
+        f"hint={result.driving_hint.command} ({result.driving_hint.confidence:.2f})"
     )
     _axis.set_xlabel("X")
     _axis.set_ylabel("Y")
@@ -231,6 +259,8 @@ def process_video(video_path: str, depth_method: Literal["fast", "midas"] = "fas
 
         cv2.imshow("Depth (raw)", result.depth_map)
         cv2.imshow("Depth (perspective-corrected)", result.corrected_depth_map)
+        cv2.imshow("Occupancy", result.occupancy_grid * 255)
+
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
