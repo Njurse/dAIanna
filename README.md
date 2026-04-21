@@ -33,3 +33,13 @@ python main.py \
 ```
 
 This updates `ddraw.ini` entries (`renderer`, `windowed`) in known CARMA/CARSPLAT locations and creates `.bak` backups when edits are made.
+
+## Auto-remember CARMA executable path
+
+In live mode, if `--launch-game` is omitted, dAIanna now:
+1. tries a previously saved path from `~/.daianna_config.json`,
+2. if missing/inaccessible, opens a file-picker for the EXE,
+3. if file-picker is unavailable, asks in terminal,
+4. re-prompts if the chosen file is invalid.
+
+The selected path is saved and reused on future launches.

@@ -1,4 +1,5 @@
 import argparse
+import json
 import shlex
 import subprocess
 import time
@@ -16,6 +17,78 @@ from carma_compat import prepare_renderer_compat
 
 CAPTURE_SIZE = (640, 480)
 DEFAULT_WINDOW_CANDIDATES = ("CARMA95.exe", "Carmageddon", "dethrace")
+CONFIG_PATH = Path.home() / ".daianna_config.json"
+
+
+def load_config() -> dict:
+    if not CONFIG_PATH.exists():
+        return {}
+    try:
+        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_config(config: dict) -> None:
+    CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+
+def _select_file_dialog() -> str | None:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        selected = filedialog.askopenfilename(
+            title="Select CARMA95 executable",
+            filetypes=[("Executable", "*.exe"), ("All files", "*.*")],
+        )
+        root.destroy()
+        return selected or None
+    except Exception:
+        return None
+
+
+def prompt_for_carma_executable() -> str:
+    selected = _select_file_dialog()
+    if selected:
+        return selected
+
+    while True:
+        manual = input("Enter full path to CARMA95 executable (e.g. dethrace.exe): ").strip()
+        if manual:
+            return manual
+        print("Empty path received. Please try again.")
+
+
+def resolve_carma_executable(explicit_path: str | None) -> str:
+    config = load_config()
+
+    candidates = []
+    if explicit_path:
+        candidates.append(explicit_path)
+    if config.get("carma_exe"):
+        candidates.append(config["carma_exe"])
+
+    for candidate in candidates:
+        if Path(candidate).expanduser().exists():
+            if config.get("carma_exe") != candidate:
+                config["carma_exe"] = candidate
+                save_config(config)
+            return candidate
+
+        print(f"Configured CARMA executable is inaccessible: {candidate}")
+
+    while True:
+        selected = prompt_for_carma_executable()
+        if Path(selected).expanduser().exists():
+            config["carma_exe"] = selected
+            save_config(config)
+            print(f"Saved CARMA executable path: {selected}")
+            return selected
+
+        print("Selected executable does not exist or is inaccessible. Please specify it again.")
 
 
 def grab_window(window_titles: tuple[str, ...], size: tuple[int, int] = CAPTURE_SIZE):
@@ -184,10 +257,11 @@ def main():
         depth_module.process_video(args.video, depth_method=args.depth)
     else:
         window_titles = tuple(part.strip() for part in args.window.split(",") if part.strip())
+        launch_path = resolve_carma_executable(args.launch_game)
         run_live(
             window_titles=window_titles,
             depth_method=args.depth,
-            launch_path=args.launch_game,
+            launch_path=launch_path,
             launch_args=args.launch_args,
             working_dir=args.working_dir,
         )
