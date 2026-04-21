@@ -11,6 +11,7 @@ import pygetwindow as gw
 
 import daianna_intro
 import depth_module
+from carma_compat import prepare_renderer_compat
 
 
 CAPTURE_SIZE = (640, 480)
@@ -133,6 +134,27 @@ def parse_args():
         default=None,
         help="Optional path to dAIannaInjector.exe; launched once at startup to assist DLL hooking.",
     )
+    parser.add_argument(
+        "--game-dir",
+        default=None,
+        help="Root folder for CARMA/CARSPLAT; used to patch ddraw.ini compatibility settings.",
+    )
+    parser.add_argument(
+        "--prepare-compat",
+        action="store_true",
+        help="Patch ddraw.ini files for old renderer compatibility before launch/capture.",
+    )
+    parser.add_argument(
+        "--renderer",
+        choices=["opengl", "gdi"],
+        default="opengl",
+        help="Renderer written to ddraw.ini when --prepare-compat is set.",
+    )
+    parser.add_argument(
+        "--windowed",
+        action="store_true",
+        help="If set with --prepare-compat, enforce windowed=true in ddraw.ini for easier capture stability.",
+    )
     return parser.parse_args()
 
 
@@ -142,6 +164,18 @@ def main():
 
     if args.depth == "midas":
         depth_module.initialize_midas()
+
+    if args.prepare_compat:
+        if not args.game_dir:
+            raise ValueError("--prepare-compat requires --game-dir")
+        changes = prepare_renderer_compat(
+            game_root=args.game_dir,
+            renderer=args.renderer,
+            windowed=args.windowed,
+        )
+        for change in changes:
+            state = "updated" if change.updated else "unchanged/missing"
+            print(f"compat: {change.path} -> {state}")
 
     if args.injector:
         launch_injector(args.injector, working_dir=args.working_dir)
