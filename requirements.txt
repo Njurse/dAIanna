@@ -1,0 +1,9 @@
+numpy>=1.24
+opencv-python>=4.8
+matplotlib>=3.8
+PyAutoGUI>=0.9.54
+PyGetWindow>=0.0.9
+
+# Optional: enable MiDaS depth mode in depth_module.initialize_midas()
+torch>=2.2
+torchvision>=0.17

@@ -17,3 +17,29 @@ In _dAIanna.py_, the received vertex buffer data undergoes 3D environment recons
 Currently, _dAIanna.py_ reconstructs the scene and creates a preview within MatPlotLib. It utilizes the old environment mapping system where it attempts to recreate the environment from a depth map interpreted from a screenshot of the game. After _dAIannaHook.dll_ is functioning this depth map method will be removed and replaced with a procedure for reconstructing the environment from the vertex buffer intercepted directly from the game, rather than estimating the depth of every pixel in a given screenshot.
 
 By separating rendering interception and AI processing, _dAIanna_ reduces 'investigative' overhead to ensure the RL Agent's environment is updated in real time, allowing it to maintain perception even when driving at high speeds.
+
+## CARMA95 renderer compatibility prep (new)
+
+To better support the old Win95 rendering path, `main.py` can now patch `ddraw.ini` in your install before capture.
+
+Example:
+
+```bash
+python main.py \
+  --prepare-compat \
+  --game-dir "F:/SteamLibrary/steamapps/common/Carmageddon1" \
+  --renderer opengl \
+  --launch-game "F:/SteamLibrary/steamapps/common/Carmageddon1/MELDPACK/dethrace.exe"
+```
+
+This updates `ddraw.ini` entries (`renderer`, `windowed`) in known CARMA/CARSPLAT locations and creates `.bak` backups when edits are made.
+
+## Auto-remember CARMA executable path
+
+In live mode, if `--launch-game` is omitted, dAIanna now:
+1. tries a previously saved path from `~/.daianna_config.json`,
+2. if missing/inaccessible, opens a file-picker for the EXE,
+3. if file-picker is unavailable, asks in terminal,
+4. re-prompts if the chosen file is invalid.
+
+The selected path is saved and reused on future launches.

@@ -1,170 +1,271 @@
+import argparse
+import json
+import shlex
+import subprocess
+import time
+from pathlib import Path
+
 import cv2
 import numpy as np
-import pygetwindow as gw
 import pyautogui
-import time
-import depth_module
+import pygetwindow as gw
+
 import daianna_intro
+import depth_module
+from carma_compat import prepare_renderer_compat
 
-def grab_window(window_title):
+
+CAPTURE_SIZE = (640, 480)
+DEFAULT_WINDOW_CANDIDATES = ("CARMA95.exe", "Carmageddon", "dethrace")
+CONFIG_PATH = Path.home() / ".daianna_config.json"
+
+
+def load_config() -> dict:
+    if not CONFIG_PATH.exists():
+        return {}
     try:
-        # Find the window by title
-        window = gw.getWindowsWithTitle(window_title)[0]
-        
-        # Activate the window (focus)
-        #window.activate()
+        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
-        # Get the coordinates of the window
-        left, top, width, height = window.left, window.top, window.width, window.height
 
-        # Capture screenshot of the window
-        screen = pyautogui.screenshot(region=(left, top, 642, 507))
-        screen = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
+def save_config(config: dict) -> None:
+    CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
-        return screen
 
-    except IndexError:
-        raise Exception(f"Window not found: {window_title}")
-        
-# Function to check if HUD is detected
-def is_hud_detected(screen):
-    # Load the template image (HUD screenshot)
-    template = cv2.imread('hud_template.png', cv2.IMREAD_COLOR)
-    
-    # Convert images to grayscale
-    screen_gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
-    template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-    
-    # Perform template matching
-    result = cv2.matchTemplate(screen_gray, template_gray, cv2.TM_CCOEFF_NORMED)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-    
-    # Threshold for match detection (adjust as needed)
-    threshold = 0.6
-    #print(f"HUD similarity: {cv2.minMaxLoc(result)}")    
-    # Check if match is found
-    if max_val >= threshold:
-        return True
-    else:
-        return False      
-def create_hud_mask(screen):
-    # Load the template image (HUD screenshot)
-    template = cv2.imread('hud_template.png', cv2.IMREAD_COLOR)
-    
-    # Convert images to grayscale
-    screen_gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
-    template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-    
-    # Perform template matching
-    result = cv2.matchTemplate(screen_gray, template_gray, cv2.TM_CCOEFF_NORMED)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-    
-    # Threshold for match detection (adjust as needed)
-    threshold = 0.60
-    #print(f"HUD similarity: {cv2.minMaxLoc(result)}")
-    
-    # Create a mask based on the matching result
-    mask = np.ones_like(screen_gray, dtype=np.uint8)
-    
-    if max_val >= threshold:
-        # Get the location of the HUD
-        hud_top_left = max_loc
-        hud_bottom_right = (max_loc[0] + template.shape[1], max_loc[1] + template.shape[0])
-        
-        # Set the HUD area in the mask to 0
-        mask[hud_top_left[1]:hud_bottom_right[1], hud_top_left[0]:hud_bottom_right[0]] = 0
-    
-    return mask
+def _select_file_dialog() -> str | None:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
 
-def grab_game_screenshot_nohud(screen):
-    # Create the HUD mask
-    mask = create_hud_mask(screen)
-    
-    # Apply the mask to the screenshot to avoid capturing the HUD
-    no_hud_screen = cv2.bitwise_and(screen, screen, mask=mask)
-    
-    return no_hud_screen        
+        root = tk.Tk()
+        root.withdraw()
+        selected = filedialog.askopenfilename(
+            title="Select CARMA95 executable",
+            filetypes=[("Executable", "*.exe"), ("All files", "*.*")],
+        )
+        root.destroy()
+        return selected or None
+    except Exception:
+        return None
 
-def is_main_menu_detected(screen):
-    # Load the template image (main menu screenshot)
-    template = cv2.imread('menu_template.png', cv2.IMREAD_COLOR)
-    
-    # Convert images to grayscale
-    screen_gray = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
-    template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-    
-    # Perform template matching
-    result = cv2.matchTemplate(screen_gray, template_gray, cv2.TM_CCOEFF_NORMED)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-    
-    # Threshold for match detection (adjust as needed)
-    threshold = 0.8
-    
-    # Check if match is found
-    if max_val >= threshold:
-        return True
-    else:
-        return False
 
-def preprocess_screen(screen, template):
-    # Extract alpha channel from template image
-    alpha_channel = template[:, :, 3]
+def prompt_for_carma_executable() -> str:
+    selected = _select_file_dialog()
+    if selected:
+        return selected
 
-    # Create mask from alpha channel
-    mask = alpha_channel > 0  # Mask will be True where alpha > 0 (non-transparent)
+    while True:
+        manual = input("Enter full path to CARMA95 executable (e.g. dethrace.exe): ").strip()
+        if manual:
+            return manual
+        print("Empty path received. Please try again.")
 
-    # Apply mask to screen capture
-    masked_screen = np.zeros_like(screen, dtype=np.uint8)
-    masked_screen[mask] = screen[mask]
 
-    return masked_screen
+def resolve_carma_executable(explicit_path: str | None) -> str:
+    config = load_config()
+
+    candidates = []
+    if explicit_path:
+        candidates.append(explicit_path)
+    if config.get("carma_exe"):
+        candidates.append(config["carma_exe"])
+
+    for candidate in candidates:
+        if Path(candidate).expanduser().exists():
+            if config.get("carma_exe") != candidate:
+                config["carma_exe"] = candidate
+                save_config(config)
+            return candidate
+
+        print(f"Configured CARMA executable is inaccessible: {candidate}")
+
+    while True:
+        selected = prompt_for_carma_executable()
+        if Path(selected).expanduser().exists():
+            config["carma_exe"] = selected
+            save_config(config)
+            print(f"Saved CARMA executable path: {selected}")
+            return selected
+
+        print("Selected executable does not exist or is inaccessible. Please specify it again.")
+
+
+def grab_window(window_titles: tuple[str, ...], size: tuple[int, int] = CAPTURE_SIZE):
+    for title in window_titles:
+        windows = gw.getWindowsWithTitle(title)
+        if windows:
+            window = windows[0]
+            left, top = window.left, window.top
+            width, height = size
+            screenshot = pyautogui.screenshot(region=(left, top, width, height))
+            frame = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+            return frame, title
+    return None, None
+
+
+def launch_game(executable: str, launch_args: str = "", working_dir: str | None = None):
+    exe_path = Path(executable).expanduser().resolve()
+    if not exe_path.exists():
+        raise FileNotFoundError(f"Game executable not found: {exe_path}")
+
+    cwd = working_dir or str(exe_path.parent)
+    cmd = [str(exe_path), *shlex.split(launch_args)]
+    print(f"Launching game: {' '.join(cmd)} (cwd={cwd})")
+    return subprocess.Popen(cmd, cwd=cwd)
+
+
+def launch_injector(injector_executable: str, working_dir: str | None = None):
+    injector = Path(injector_executable).expanduser().resolve()
+    if not injector.exists():
+        raise FileNotFoundError(f"Injector executable not found: {injector}")
+
+    cwd = working_dir or str(injector.parent)
+    print(f"Launching injector UI: {injector}")
+    return subprocess.Popen([str(injector)], cwd=cwd)
+
+
+def run_live(
+    window_titles: tuple[str, ...],
+    depth_method: str = "fast",
+    launch_path: str | None = None,
+    launch_args: str = "",
+    working_dir: str | None = None,
+):
+    print(f"Starting live capture for {window_titles} using '{depth_method}' depth mode...")
+    launched = False
+
+    while True:
+        frame, matched_title = grab_window(window_titles)
+        if frame is None:
+            if launch_path and not launched:
+                launch_game(launch_path, launch_args=launch_args, working_dir=working_dir)
+                launched = True
+                time.sleep(2.0)
+                continue
+
+            print(f"Waiting for game window matching: {window_titles}")
+            time.sleep(0.5)
+            continue
+
+        result = depth_module.reconstruct_environment(frame, depth_method=depth_method)
+        depth_module.visualize_result(result)
+
+        annotated = frame.copy()
+        hint = result.driving_hint
+        cv2.putText(
+            annotated,
+            f"Hint: {hint.command} ({hint.confidence:.2f})",
+            (10, 25),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 0),
+            2,
+            cv2.LINE_AA,
+        )
+
+        cv2.imshow(f"CARMA Capture ({matched_title})", annotated)
+        cv2.imshow("Depth (raw)", result.depth_map)
+        cv2.imshow("Depth (perspective-corrected)", result.corrected_depth_map)
+        cv2.imshow("Occupancy", result.occupancy_grid * 255)
+
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+
+    cv2.destroyAllWindows()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="dAIanna runtime for CARMA95.exe")
+    parser.add_argument(
+        "--window",
+        default=",".join(DEFAULT_WINDOW_CANDIDATES),
+        help="Comma-separated window-title candidates (first match is used).",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["live", "video"],
+        default="live",
+        help="Run against a live game window or a video file.",
+    )
+    parser.add_argument("--video", default="sample_input.mkv", help="Video path when --mode video is used.")
+    parser.add_argument(
+        "--depth",
+        choices=["fast", "midas"],
+        default="fast",
+        help="Depth estimation mode.",
+    )
+    parser.add_argument(
+        "--launch-game",
+        default=None,
+        help="Optional path to CARMA executable; auto-launched when no matching window is found.",
+    )
+    parser.add_argument("--launch-args", default="", help="Optional CLI args forwarded to --launch-game.")
+    parser.add_argument("--working-dir", default=None, help="Optional working dir for launching executables.")
+    parser.add_argument(
+        "--injector",
+        default=None,
+        help="Optional path to dAIannaInjector.exe; launched once at startup to assist DLL hooking.",
+    )
+    parser.add_argument(
+        "--game-dir",
+        default=None,
+        help="Root folder for CARMA/CARSPLAT; used to patch ddraw.ini compatibility settings.",
+    )
+    parser.add_argument(
+        "--prepare-compat",
+        action="store_true",
+        help="Patch ddraw.ini files for old renderer compatibility before launch/capture.",
+    )
+    parser.add_argument(
+        "--renderer",
+        choices=["opengl", "gdi"],
+        default="opengl",
+        help="Renderer written to ddraw.ini when --prepare-compat is set.",
+    )
+    parser.add_argument(
+        "--windowed",
+        action="store_true",
+        help="If set with --prepare-compat, enforce windowed=true in ddraw.ini for easier capture stability.",
+    )
+    return parser.parse_args()
+
 
 def main():
-    window_title = "Carmageddon"
-    print("Initializing main thread...") #to do: switch to proper logging, absolutely necessary if i decide async is required
-    try:
-        while True:
-            # Capture from the specific window
-            screen = grab_window(window_title)
-            if screen is None:
-                print("Issue capturing the window, skipping this generation.")
-                continue  # Skip this iteration if screen capture failed
-            else:
-                # Check if HUD is detected (preprocess only if not in main menu)
-                if not is_main_menu_detected(screen):
-                    hud_template = cv2.imread('hud_template.png', cv2.IMREAD_UNCHANGED)
-                    masked_screen = preprocess_screen(screen, hud_template)
-                    if is_hud_detected(masked_screen):
-                        #print("In-game HUD detected!")
-                        no_hud_screen = grab_game_screenshot_nohud(screen)
-                        color_screen = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
-                        depth_module.process_depth_mapping(no_hud_screen)
-                    else:
-                        continue
-                        #print("Not in-game and no menu detected.")
-                else:
-                    continue
-                    #print("Main menu detected!")
+    args = parse_args()
+    daianna_intro.play_intro()
 
-                # Display the captured screen
-                cv2.imshow('Game Screen', screen)
-                cv2.waitKey(1)  # Wait for 1 millisecond (non-blocking)
-            
-            # Check for 'q' key to exit loop and close window
-            #if cv2.waitKey(1) & 0xFF == ord('q'):
-                #break
-            
-            # Wait for 0.25 seconds (quarter second)
-            time.sleep(0.1)
+    if args.depth == "midas":
+        depth_module.initialize_midas()
 
-    except Exception as e:
-        print(f"Error: {e}")
+    if args.prepare_compat:
+        if not args.game_dir:
+            raise ValueError("--prepare-compat requires --game-dir")
+        changes = prepare_renderer_compat(
+            game_root=args.game_dir,
+            renderer=args.renderer,
+            windowed=args.windowed,
+        )
+        for change in changes:
+            state = "updated" if change.updated else "unchanged/missing"
+            print(f"compat: {change.path} -> {state}")
 
-    finally:
-        cv2.destroyAllWindows()
+    if args.injector:
+        launch_injector(args.injector, working_dir=args.working_dir)
+
+    if args.mode == "video":
+        depth_module.process_video(args.video, depth_method=args.depth)
+    else:
+        window_titles = tuple(part.strip() for part in args.window.split(",") if part.strip())
+        launch_path = resolve_carma_executable(args.launch_game)
+        run_live(
+            window_titles=window_titles,
+            depth_method=args.depth,
+            launch_path=launch_path,
+            launch_args=args.launch_args,
+            working_dir=args.working_dir,
+        )
+
 
 if __name__ == "__main__":
-    daianna_intro.play_intro()
-    depth_module.initialize_midas()
-    depth_module.process_video("sample_input.mkv")
-    #main() #is commented out at the moment because we can test mapping from a video then when everything is correct and tracing as it should the video can be swapped for opencv capture
+    main()
